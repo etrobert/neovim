@@ -63,6 +63,7 @@ local namespace = api.nvim_create_namespace('nvim.lsp.inline_completion')
 ---@field active table<integer, vim.lsp.inline_completion.Completor?>
 ---@field timer? uv.uv_timer_t Timer for debouncing automatic requests
 ---@field current? vim.lsp.inline_completion.Item Currently selected item
+---@field _index? integer Index of the last selected item, kept across invalidation
 ---@field client_state table<integer, vim.lsp.inline_completion.ClientState>
 local Completor = {
   name = 'inline_completion',
@@ -168,6 +169,7 @@ end
 ---@param show_index? boolean
 function Completor:select(index, show_index)
   self.current = nil
+  self._index = index
   local client_id, item = self:get_item(index)
   if not client_id or not item then
     self:hide()
@@ -240,6 +242,19 @@ function Completor:show(hint)
     local cursor_row, cursor_col =
       vim.pos.cursor(self.bufnr, api.nvim_win_get_cursor(winid)):to_extmark()
     if row == cursor_row then
+      -- An item may replace the text its own range covers, so only text typed
+      -- past that range can contradict the candidate.
+      local typed_col = cursor_col
+      if current.range then
+        local _, _, _, end_col = current.range:to_extmark()
+        typed_col = end_col
+      end
+      -- Column at which the buffer stops matching the candidate.
+      local diverged = col + skip - 1
+      if diverged >= typed_col and diverged < cursor_col then
+        self.current = nil
+        return
+      end
       skip = math.max(skip, cursor_col - col + 1)
     end
   end
@@ -417,13 +432,12 @@ function M.select(opts)
   local count = opts.count or vim.v.count1
   local wrap = opts.wrap ~= false
 
-  local current = completor.current
-  if not current then
+  local n = completor:count_items()
+  if n == 0 then
     return
   end
 
-  local n = completor:count_items()
-  local index = current._index + count
+  local index = completor._index + count
   if wrap then
     index = (index - 1) % n + 1
   else

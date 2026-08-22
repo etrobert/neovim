@@ -84,6 +84,11 @@ describe('vim.lsp.inline_completion', function()
         },
         handlers = {
           ['textDocument/inlineCompletion'] = function(_, _, callback)
+            if _G.items then
+              callback(nil, { items = _G.items })
+              return
+            end
+
             if _G.empty then
               callback(nil, {
                 items = {
@@ -279,6 +284,108 @@ describe('vim.lsp.inline_completion', function()
           1,
         },
       }, result)
+    end)
+  end)
+
+  describe('stale candidates', function()
+    --- An item on the line the cursor is on, so that typing can contradict it.
+    --- @param insert_text string
+    --- @param start_char integer
+    --- @param end_char integer
+    local function serve_one(insert_text, start_char, end_char)
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = insert_text,
+            range = {
+              start = { line = 1, character = start_char },
+              ['end'] = { line = 1, character = end_char },
+            },
+          },
+        }
+      end)
+    end
+
+    it('drops a candidate contradicted by text typed past its range', function()
+      serve_one('foobar', 0, 1)
+      feed('if')
+      screen:expect([[
+        function fibonacci()                                 |
+        f{1:^oobar}                                               |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      feed('x')
+      screen:expect([[
+        function fibonacci()                                 |
+        fx^                                                   |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+    end)
+
+    it('keeps a candidate that replaces text inside its own range', function()
+      serve_one('oo)', 1, 2)
+      feed('if)<Left>')
+      screen:expect([[
+        function fibonacci()                                 |
+        f{1:^oo)}                                                 |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      feed('x')
+      screen:expect([[
+        function fibonacci()                                 |
+        fx{1:^o)}                                                 |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+    end)
+
+    it('still cycles past a candidate it dropped', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'foobar',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 1 },
+            },
+          },
+          {
+            insertText = 'fbaz',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 1 },
+            },
+          },
+        }
+      end)
+      feed('ifo')
+      screen:expect([[
+        function fibonacci()                                 |
+        fo{1:^obar}                                               |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.select()
+      end)
+      screen:expect([[
+        function fibonacci()                                 |
+        fo^                                                   |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.select()
+      end)
+      screen:expect([[
+        function fibonacci()                                 |
+        fo{1:^obar}{2: (1/2)}                                         |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
     end)
   end)
 
