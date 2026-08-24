@@ -344,33 +344,48 @@ function Completor:abort()
   self.current = nil
 end
 
+---@private
+---@param range vim.Range
+---@param lines string[]
+---@return integer start_row, integer start_col
+function Completor:replace(range, lines)
+  local start_row, start_col, end_row, end_col = range:to_extmark()
+  -- The line may have shrunk past the range since the item arrived.
+  local end_line = api.nvim_buf_get_lines(self.bufnr, end_row, end_row + 1, true)[1]
+  end_col = math.min(end_col, #end_line)
+  api.nvim_buf_set_text(self.bufnr, start_row, start_col, end_row, end_col, lines)
+  return start_row, start_col
+end
+
 --- Accept the current completion item to the buffer.
 ---
 ---@package
 ---@param item vim.lsp.inline_completion.Item
 function Completor:accept(item)
+  local win = api.nvim_get_current_win()
+  win = api.nvim_win_get_buf(win) == self.bufnr and win or vim.fn.bufwinid(self.bufnr)
+
   local insert_text = item.insert_text
   if type(insert_text) == 'string' then
     if item.range then
-      local start_row, start_col, end_row, end_col = item.range:to_extmark()
-      -- The line may have shrunk past the range since the item arrived.
-      local end_line = api.nvim_buf_get_lines(self.bufnr, end_row, end_row + 1, true)[1]
-      end_col = math.min(end_col, #end_line)
-
       local lines = vim.split(insert_text, '\n')
-      api.nvim_buf_set_text(self.bufnr, start_row, start_col, end_row, end_col, lines)
-      local win = api.nvim_get_current_win()
-      win = api.nvim_win_get_buf(win) == self.bufnr and win or vim.fn.bufwinid(self.bufnr)
-      local row, col = item.range:to_mark()
+      local row, col = self:replace(item.range, lines)
       api.nvim_win_set_cursor(win, {
-        row + #lines - 1,
+        row + #lines,
         (#lines == 1 and col or 0) + #lines[#lines],
       })
     else
       api.nvim_paste(insert_text, false, 0)
     end
   elseif insert_text.kind == 'snippet' then
-    vim.snippet.expand(insert_text.value)
+    -- `vim.snippet.expand()` inserts at the cursor of the current window.
+    api.nvim_win_call(win, function()
+      if item.range then
+        local row, col = self:replace(item.range, {})
+        api.nvim_win_set_cursor(0, { row + 1, col })
+      end
+      vim.snippet.expand(insert_text.value)
+    end)
   end
 
   -- Execute the command *after* inserting this completion.

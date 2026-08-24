@@ -330,6 +330,63 @@ describe('vim.lsp.inline_completion', function()
                                                              |
       ]])
     end)
+
+    local function show_snippet_item()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = { kind = 'snippet', value = 'foobar' },
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 3 },
+            },
+          },
+        }
+      end)
+      feed('ifoo')
+      screen:expect([[
+        function fibonacci()                                 |
+        foo{1:^bar}                                               |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+    end
+
+    it('replaces the range of a snippet item', function()
+      show_snippet_item()
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      eq({ 'function fibonacci()', 'foobar' }, api.nvim_buf_get_lines(0, 0, -1, true))
+    end)
+
+    it('accepts a snippet item after the line shrank past its range', function()
+      show_snippet_item()
+      exec_lua(function()
+        -- Shrink the line the item's range covers, as backspacing would.
+        vim.api.nvim_buf_set_text(0, 1, 1, 1, 3, {})
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      eq({ 'function fibonacci()', 'foobar' }, api.nvim_buf_get_lines(0, 0, -1, true))
+    end)
+
+    it('replaces the range of a snippet item accepted into another buffer', function()
+      show_snippet_item()
+      local lines = exec_lua(function()
+        local target = vim.api.nvim_get_current_buf()
+        vim.cmd('vsplit | enew')
+        vim.lsp.inline_completion.get({ bufnr = target })
+        vim.wait(1000, function()
+          return vim.api.nvim_buf_get_lines(target, 1, 2, true)[1] ~= 'foo'
+        end) -- Wait for the scheduled accept.
+        return vim.api.nvim_buf_get_lines(target, 0, -1, true)
+      end)
+      eq({ 'function fibonacci()', 'foobar' }, lines)
+    end)
   end)
 
   describe('select()', function()
