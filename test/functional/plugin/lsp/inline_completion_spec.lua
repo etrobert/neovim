@@ -211,6 +211,37 @@ describe('vim.lsp.inline_completion', function()
       ]])
       screen:expect_unchanged(false, 500)
     end)
+
+    it('sends the item selected in the completion popup', function()
+      feed('if<C-x><C-n>')
+
+      local context = exec_lua(function()
+        local function last_context()
+          for i = #_G.server.messages, 1, -1 do
+            local msg = _G.server.messages[i]
+            if msg.method == 'textDocument/inlineCompletion' then
+              return msg.params.context
+            end
+          end
+        end
+        vim.wait(1000, function()
+          local ctx = last_context()
+          return ctx ~= nil and ctx.selectedCompletionInfo ~= nil
+        end)
+        return last_context()
+      end)
+
+      eq({
+        triggerKind = 2,
+        selectedCompletionInfo = {
+          range = {
+            start = { line = 1, character = 0 },
+            ['end'] = { line = 1, character = 8 },
+          },
+          text = 'function',
+        },
+      }, context)
+    end)
   end)
 
   describe('get()', function()
