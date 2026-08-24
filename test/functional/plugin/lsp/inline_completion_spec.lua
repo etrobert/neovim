@@ -21,14 +21,14 @@ describe('vim.lsp.inline_completion', function()
   ]])
 
   local grid_without_candidates = dedent([[
-    function fibonacci()                                 |
-    ^                                                     |
+    ^function fibonacci()                                 |
+                                                         |
     {1:~                                                    }|*11
                                                          |
   ]])
 
   local grid_with_candidates = dedent([[
-    function fibonacci({1:n) {}                              |
+    ^function fibonacci({1:n) {}                              |
     {1:  if (n <= 0) return 0;}                              |
     {1:  if (n === 1) return 1;}                             |
                                                          |
@@ -40,7 +40,7 @@ describe('vim.lsp.inline_completion', function()
     {1:  }}                                                  |
     {1:  return b;}                                          |
     {1:}}                                                    |
-    ^                                                     |
+                                                         |
     {3:-- INSERT --}                                         |
   ]])
 
@@ -181,7 +181,7 @@ describe('vim.lsp.inline_completion', function()
     end)
 
     insert(text)
-    feed('$')
+    feed('gg')
     exec_lua(function()
       vim.lsp.inline_completion.enable()
     end)
@@ -204,8 +204,8 @@ describe('vim.lsp.inline_completion', function()
       screen:expect({ grid = grid_without_candidates })
       feed('ifoobar<Esc>')
       screen:expect([[
-        function fibonacci()                                 |
-        fooba^r                                               |
+        fooba^rfunction fibonacci()                           |
+                                                             |
         {1:~                                                    }|*11
                                                              |
       ]])
@@ -231,8 +231,8 @@ describe('vim.lsp.inline_completion', function()
       end)
       feed('I')
       screen:expect([[
-        function fibonacci({1:foobar})                           |
-        ^                                                     |
+        ^function fibonacci({1:foobar})                           |
+                                                             |
         {1:~                                                    }|*11
         {3:-- INSERT --}                                         |
       ]])
@@ -311,7 +311,7 @@ describe('vim.lsp.inline_completion', function()
           },
         }
       end)
-      feed('ifo')
+      feed('jifo')
       screen:expect([[
         function fibonacci()                                 |
         fo{1:^obar}                                               |
@@ -330,6 +330,64 @@ describe('vim.lsp.inline_completion', function()
                                                              |
       ]])
     end)
+
+    it('ignores an item whose range is not on the cursor line', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'foobar',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 0 },
+            },
+          },
+        }
+      end)
+
+      feed('i')
+      screen:expect([[
+        ^function fibonacci()                                 |
+                                                             |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      screen:expect_unchanged(false, 500)
+      eq(
+        false,
+        exec_lua(function()
+          return vim.lsp.inline_completion.get()
+        end)
+      )
+
+      feed('<Down>')
+      screen:expect([[
+        function fibonacci()                                 |
+        {1:^foobar}                                               |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+    end)
+
+    it('anchors a rangeless item in the window the cursor is in', function()
+      exec_lua(function()
+        _G.items = { { insertText = 'foobar' } }
+      end)
+
+      -- Split first, so that the window the cursor ends up in is not `bufwinid()`.
+      feed('<C-w>s<C-w>jjihi')
+      eq(
+        { 1, 2 },
+        exec_lua(function()
+          local ns = vim.api.nvim_get_namespaces()['nvim.lsp.inline_completion']
+          local mark
+          vim.wait(1000, function()
+            mark = vim.api.nvim_buf_get_extmarks(0, ns, 0, -1, {})[1]
+            return mark ~= nil
+          end)
+          return mark and { mark[2], mark[3] }
+        end)
+      )
+    end)
   end)
 
   describe('select()', function()
@@ -342,7 +400,7 @@ describe('vim.lsp.inline_completion', function()
       end)
 
       screen:expect([[
-        function fibonacci({1:n) {}                              |
+        ^function fibonacci({1:n) {}                              |
         {1:  if (n <= 0) return 0;}                              |
         {1:  if (n === 1) return 1;}                             |
                                                              |
@@ -354,7 +412,7 @@ describe('vim.lsp.inline_completion', function()
         {1:  }}                                                  |
         {1:  return c;}                                          |
         {1:}}{2: (2/3)}                                              |
-        ^                                                     |
+                                                             |
         {3:-- INSERT --}                                         |
       ]])
       exec_lua(function()
