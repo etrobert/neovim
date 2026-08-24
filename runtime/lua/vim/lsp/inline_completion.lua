@@ -214,12 +214,13 @@ function Completor:show(hint)
     table.insert(lines[#lines], { hint, 'ComplHintMore' })
   end
 
-  local row, col ---@type integer, integer
+  local row, col, end_row, end_col ---@type integer, integer, integer, integer
   if current.range then
-    row, col = current.range:to_extmark()
+    row, col, end_row, end_col = current.range:to_extmark()
   else
     row, col =
       vim.pos.cursor(self.bufnr, api.nvim_win_get_cursor(vim.fn.bufwinid(self.bufnr))):to_extmark()
+    end_row, end_col = row, col
   end
 
   -- To ensure that virtual text remains visible continuously (without flickering)
@@ -237,21 +238,26 @@ function Completor:show(hint)
   -- which should be skipped before displaying the virtual text.
   local virt_text = lines[1]
   local skip = lcp(line_text:sub(col + 1), virt_text[1][1])
+  if skip <= #virt_text[1][1] then
+    -- The texts may first differ inside a multibyte character; don't split one.
+    skip = skip + vim.str_utf_start(virt_text[1][1], skip)
+  end
   local winid = api.nvim_get_current_win()
-  -- At least, characters before the cursor should be skipped.
   if api.nvim_win_get_buf(winid) == self.bufnr then
     local cursor_row, cursor_col =
       vim.pos.cursor(self.bufnr, api.nvim_win_get_cursor(winid)):to_extmark()
-    if row == cursor_row then
-      -- Characters typed since the request lie past the item's range, so `accept()`
-      -- would leave them behind. `skip` stops where the buffer stops matching.
-      if current.range and col + skip - 1 >= cursor_col then
-        local start_row, start_col, _, end_col = current.range:to_extmark()
-        if end_col < cursor_col then
-          current.range = vim.range.extmark(self.bufnr, start_row, start_col, row, cursor_col)
-        end
+    if row == cursor_row and end_row == cursor_row then
+      -- A mismatch inside the range is harmless: `accept()` replaces that text anyway.
+      local match_end_col = col + skip - 1
+      if match_end_col >= end_col and match_end_col < cursor_col then
+        self.current = nil
+        return
       end
-      skip = math.max(skip, cursor_col - col + 1)
+      -- Characters typed since the request lie past the item's range, so `accept()`
+      -- would leave them behind.
+      if current.range and match_end_col >= cursor_col and end_col < cursor_col then
+        current.range = vim.range.extmark(self.bufnr, row, col, row, cursor_col)
+      end
     end
   end
   virt_text[1][1] = virt_text[1][1]:sub(skip)
