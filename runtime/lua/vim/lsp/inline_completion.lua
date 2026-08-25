@@ -109,6 +109,43 @@ local function lcp(a, b)
   return i
 end
 
+--- Longest common suffix
+---
+---@param a string
+---@param b string
+---@return integer length of the common suffix, in bytes, never splitting a character of {b}
+local function lcs(a, b)
+  local n = lcp(a:reverse(), b:reverse()) - 1
+  while n > 0 and vim.str_utf_start(b, #b - n + 1) ~= 0 do
+    n = n - 1
+  end
+  return n
+end
+
+--- Drops the suffix a single-line insertion shares with the rest of its line, which the server
+--- cannot know the client already typed, such as a bracket closed by an auto-pairs plugin.
+--- Only insertions qualify: with text to replace, the shared run is inside the replacement.
+---
+---@param buf integer
+---@param text string
+---@param range? vim.Range
+---@return string
+local function trim_suffix(buf, text, range)
+  if text:find('\n', 1, true) or (range and not range:is_empty()) then
+    return text
+  end
+  local row, col ---@type integer, integer
+  if range then
+    row, col = range:to_extmark()
+  else
+    row, col = vim.pos.cursor(buf, api.nvim_win_get_cursor(vim.fn.bufwinid(buf))):to_extmark()
+  end
+  local after = (api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ''):sub(col + 1)
+  local n = lcs(after, text)
+  -- Trimming the candidate away entirely would leave nothing to accept.
+  return n < #text and text:sub(1, #text - n) or text
+end
+
 --- `lsp.Handler` for `textDocument/inlineCompletion`.
 ---
 ---@package
@@ -204,7 +241,7 @@ function Completor:show(hint)
   end
 
   local insert_text = current.insert_text
-  local text = type(insert_text) == 'string' and insert_text
+  local text = type(insert_text) == 'string' and trim_suffix(self.bufnr, insert_text, current.range)
     or tostring(grammar.parse(insert_text.value))
   local lines = {} ---@type [string, string][][]
   for s in vim.gsplit(text, '\n', { plain = true }) do
@@ -351,6 +388,7 @@ end
 function Completor:accept(item)
   local insert_text = item.insert_text
   if type(insert_text) == 'string' then
+    insert_text = trim_suffix(self.bufnr, insert_text, item.range)
     if item.range then
       local start_row, start_col, end_row, end_col = item.range:to_extmark()
       -- The line may have shrunk past the range since the item arrived.

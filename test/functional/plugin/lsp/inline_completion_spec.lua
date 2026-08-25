@@ -330,6 +330,59 @@ describe('vim.lsp.inline_completion', function()
                                                              |
       ]])
     end)
+
+    it('drops a candidate suffix already present after the cursor', function()
+      exec_lua(function()
+        vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo()' })
+        _G.items = {
+          {
+            insertText = 'bar)',
+            range = {
+              start = { line = 0, character = 4 },
+              ['end'] = { line = 0, character = 4 },
+            },
+          },
+        }
+      end)
+      feed('i<Right><Right><Right><Right>')
+      screen:expect([[
+        foo({1:^bar})                                             |
+        {1:~                                                    }|*12
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      eq({ 'foo(bar)' }, api.nvim_buf_get_lines(0, 0, -1, false))
+    end)
+
+    it('drops a shared suffix without splitting a character', function()
+      exec_lua(function()
+        vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'f(é)' })
+        _G.items = {
+          {
+            insertText = 'x é)',
+            range = {
+              start = { line = 0, character = 2 },
+              ['end'] = { line = 0, character = 2 },
+            },
+          },
+        }
+      end)
+      feed('i<Right><Right>')
+      exec_lua(function()
+        local ns = vim.api.nvim_get_namespaces()['nvim.lsp.inline_completion']
+        vim.wait(1000, function()
+          return #vim.api.nvim_buf_get_extmarks(0, ns, 0, -1, {}) > 0
+        end)
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      eq({ 'f(x é)' }, api.nvim_buf_get_lines(0, 0, -1, false))
+    end)
   end)
 
   describe('select()', function()
