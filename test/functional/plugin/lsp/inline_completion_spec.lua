@@ -330,6 +330,153 @@ describe('vim.lsp.inline_completion', function()
                                                              |
       ]])
     end)
+
+    it('keeps text past the range end when the range replaces differing text', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'foo(qux)',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 8 },
+            },
+          },
+        }
+      end)
+      feed('ifoo(bar) baz')
+      screen:expect([[
+        function fibonacci()                                 |
+        foo({1:qux)} baz^                                         |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      screen:expect([[
+        function fibonacci()                                 |
+        foo(qux^) baz                                         |
+        {1:~                                                    }|*11
+                                                             |
+      ]])
+    end)
+
+    it('hides an item contradicted by text typed since the request', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'foobar',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 0 },
+            },
+          },
+        }
+      end)
+      feed('ixyz')
+      screen:expect([[
+        function fibonacci()                                 |
+        xyz^                                                  |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      screen:expect_unchanged(false, 500)
+    end)
+
+    it('keeps an item whose range replaces text differing from it', function()
+      feed('kA')
+      screen:expect([[
+        function fibonacci({1:n^) {}                              |
+        {1:  if (n <= 0) return 0;}                              |
+        {1:  if (n === 1) return 1;}                             |
+                                                             |
+        {1:  let a = 0, b = 1, c;}                               |
+        {1:  for (let i = 2; i <= n; i++) {}                     |
+        {1:    c = a + b;}                                       |
+        {1:    a = b;}                                           |
+        {1:    b = c;}                                           |
+        {1:  }}                                                  |
+        {1:  return b;}                                          |
+        {1:}}                                                    |
+                                                             |
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      screen:expect({ grid = grid_applied_candidates })
+    end)
+
+    it('keeps a multibyte character whole when the item first differs inside it', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'hêllo wörld',
+            range = {
+              start = { line = 1, character = 0 },
+              ['end'] = { line = 1, character = 5 },
+            },
+          },
+        }
+      end)
+      feed('ihéllo')
+      screen:expect([[
+        function fibonacci()                                 |
+        h{1:êllo^ wörld}                                          |
+        {1:~                                                    }|*11
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      screen:expect([[
+        function fibonacci()                                 |
+        hêllo wörl^d                                          |
+        {1:~                                                    }|*11
+                                                             |
+      ]])
+    end)
+
+    it('keeps an item whose range spans multiple lines, which the LSP spec forbids', function()
+      exec_lua(function()
+        _G.items = {
+          {
+            insertText = 'function fibonacci(n) {\n  return n;\n}',
+            range = {
+              start = { line = 0, character = 0 },
+              ['end'] = { line = 1, character = 0 },
+            },
+          },
+        }
+      end)
+      feed('kA')
+      screen:expect([[
+        function fibonacci({1:n^) {}                              |
+        {1:  return n;}                                          |
+        {1:}}                                                    |
+                                                             |
+        {1:~                                                    }|*9
+        {3:-- INSERT --}                                         |
+      ]])
+      exec_lua(function()
+        vim.lsp.inline_completion.get()
+      end)
+      n.poke_eventloop()
+      feed('<Esc>')
+      screen:expect([[
+        function fibonacci(n) {                              |
+          return n;                                          |
+        ^}                                                    |
+        {1:~                                                    }|*10
+                                                             |
+      ]])
+    end)
   end)
 
   describe('select()', function()
