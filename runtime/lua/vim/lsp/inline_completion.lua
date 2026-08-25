@@ -279,21 +279,45 @@ function Completor:hide()
   api.nvim_buf_clear_namespace(self.bufnr, namespace, 0, -1)
 end
 
+---@param bufnr integer
+---@param position_encoding lsp.PositionEncodingKind
+---@return lsp.SelectedCompletionInfo?
+local function selected_completion_info(bufnr, position_encoding)
+  if vim.fn.pumvisible() == 0 then
+    return
+  end
+
+  local item = vim.fn.complete_info({ 'completed' }).completed
+  if not item then
+    return
+  end
+
+  local lnum, col = unpack(api.nvim_win_get_cursor(0)) --- @type integer, integer
+  local line = api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, true)[1]
+  -- The entry is inserted at the completion start column, so it spans back from the cursor.
+  -- With 'noinsert' it is not inserted, and that column cannot be recovered.
+  if line:sub(col - #item.word + 1, col) ~= item.word then
+    return
+  end
+
+  return {
+    range = vim.range
+      .extmark(bufnr, lnum - 1, col - #item.word, lnum - 1, col)
+      :to_lsp(position_encoding),
+    text = item.word,
+  }
+end
+
 ---@package
 ---@param kind lsp.InlineCompletionTriggerKind
 function Completor:request(kind)
   for client_id in pairs(self.client_state) do
     local client = assert(vim.lsp.get_client_by_id(client_id))
     ---@type lsp.InlineCompletionContext
-    local context = { triggerKind = kind }
-    if
-      kind == protocol.InlineCompletionTriggerKind.Invoked and api.nvim_get_mode().mode:match('^v')
-    then
-      context.selectedCompletionInfo = {
-        range = util.make_given_range_params(nil, nil, self.bufnr, client.offset_encoding).range,
-        text = table.concat(vim.fn.getregion(vim.fn.getpos("'<"), vim.fn.getpos("'>")), '\n'),
-      }
-    end
+    local context = {
+      triggerKind = kind,
+      selectedCompletionInfo = selected_completion_info(self.bufnr, client.offset_encoding),
+    }
 
     ---@type lsp.InlineCompletionParams
     local params = {
